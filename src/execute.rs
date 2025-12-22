@@ -354,6 +354,8 @@ fn decide_ffmpeg_mode(plan: &Plan, info: Option<&crate::ffprobe::MediaInfo>) -> 
 }
 
 fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, json_output: bool) {
+    use std::io::Write;
+
     let reader = BufReader::new(stdout);
     let mut last_percent: Option<f64> = None;
     let mut last_elapsed: Option<f64> = None;
@@ -363,8 +365,9 @@ fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, js
                 continue;
             }
             if duration_seconds.is_some() && last_percent.is_none_or(|percent| percent < 99.5) {
-                println!("Progress: 100%");
+                eprintln!("\rffmpeg 100%");
             }
+            let _ = std::io::stderr().flush();
             continue;
         }
         let Some(value) = line.strip_prefix("out_time_ms=") else {
@@ -384,13 +387,18 @@ fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, js
             }
             if last_percent.is_none_or(|last| (percent - last).abs() >= 1.0) {
                 let remaining = (duration - elapsed).max(0.0);
-                println!("Progress: {:.0}% eta {:.1}s", percent, remaining);
+                eprint!("\rffmpeg {:.0}% eta {:.1}s", percent, remaining);
+                let _ = std::io::stderr().flush();
                 last_percent = Some(percent);
             }
         } else if !json_output && last_elapsed.is_none_or(|last| (elapsed - last).abs() >= 1.0) {
-            println!("Progress: {:.1}s elapsed", elapsed);
+            eprint!("\rffmpeg {:.1}s elapsed", elapsed);
+            let _ = std::io::stderr().flush();
             last_elapsed = Some(elapsed);
         }
+    }
+    if !json_output {
+        eprintln!();
     }
 }
 
