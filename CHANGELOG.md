@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Spinner progress for ImageMagick and LibreOffice conversions.
 
+## [0.1.8] - 2025-12-22
+
+### Added
+- Streamlined progress output for ffmpeg and spinners.
+
 ## [Unreleased]
 
 ## [0.1.5] - 2025-12-22
