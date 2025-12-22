@@ -1,5 +1,7 @@
 use crate::ffprobe::probe_media;
-use crate::plan::{Backend, FfmpegMode, MediaKind, Plan, Strategy};
+use crate::plan::{
+    Backend, FfmpegMode, MediaKind, Plan, Strategy, default_audio_codec, default_video_codec,
+};
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::io::{self, BufRead, BufReader};
@@ -9,8 +11,12 @@ use tempfile::Builder;
 
 pub fn execute_plan(plan: &Plan, overwrite: bool) -> Result<()> {
     ensure_parent_dir(&plan.destination)?;
-    if plan.destination.exists() && !overwrite {
-        bail!("destination exists; pass --overwrite to replace it");
+    if plan.destination.exists() {
+        if plan.backup {
+            backup_existing(&plan.destination)?;
+        } else if !overwrite {
+            bail!("destination exists; pass --overwrite or --backup");
+        }
     }
 
     match plan.strategy {
@@ -63,13 +69,27 @@ fn convert(plan: &Plan, overwrite: bool) -> Result<()> {
     match backend {
         Backend::ImageMagick => run_imagemagick(&plan.source, &temp_path, &plan.options)?,
         Backend::Ffmpeg => {
-            let info = probe_media(&plan.source).ok();
+            let info = match probe_media(&plan.source) {
+                Ok(info) => Some(info),
+                Err(err) => {
+                    let message = err.to_string();
+                    if message.contains("ffprobe not found") {
+                        eprintln!(
+                            "Warning: ffprobe not found; install ffmpeg to enable stream-copy detection."
+                        );
+                    } else {
+                        eprintln!("Warning: ffprobe failed; continuing without it: {err}");
+                    }
+                    None
+                }
+            };
             let mode = decide_ffmpeg_mode(plan, info.as_ref());
             run_ffmpeg(
                 &plan.source,
                 &temp_path,
                 &plan.options,
                 plan.dest_kind,
+                plan.dest_ext.as_deref(),
                 mode,
                 info.as_ref().and_then(|i| i.duration_seconds),
             )?;
@@ -104,19 +124,31 @@ fn run_imagemagick(
 
     let status = match status {
         Ok(status) => status,
-        Err(_) => {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             let mut command = Command::new("convert");
             command.arg(source);
             if let Some(quality) = options.image_quality {
                 command.arg("-quality").arg(quality.to_string());
             }
             command.arg(dest);
-            let status = command
+            let status = match command
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
                 .status()
-                .context("failed to execute ImageMagick convert")?;
+            {
+                Ok(status) => status,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    bail!("ImageMagick not found; install it (e.g., apt install imagemagick)");
+                }
+                Err(err) => {
+                    return Err(anyhow::Error::new(err))
+                        .context("failed to execute ImageMagick convert");
+                }
+            };
             return handle_status(status, "ImageMagick");
+        }
+        Err(err) => {
+            return Err(anyhow::Error::new(err)).context("failed to execute ImageMagick");
         }
     };
 
@@ -128,6 +160,7 @@ fn run_ffmpeg(
     dest: &Path,
     options: &crate::plan::ConversionOptions,
     dest_kind: MediaKind,
+    dest_ext: Option<&str>,
     mode: FfmpegMode,
     duration_seconds: Option<f64>,
 ) -> Result<()> {
@@ -136,6 +169,7 @@ fn run_ffmpeg(
         .arg("-nostdin")
         .arg("-y")
         .arg("-hide_banner")
+        .arg("-nostats")
         .arg("-loglevel")
         .arg("error")
         .arg("-i")
@@ -143,7 +177,11 @@ fn run_ffmpeg(
     if mode == FfmpegMode::StreamCopy {
         command.arg("-c").arg("copy");
     } else if dest_kind == MediaKind::Video {
-        if let Some(codec) = options.video_codec.as_deref() {
+        let video_codec = options
+            .video_codec
+            .as_deref()
+            .or_else(|| default_video_codec(dest_ext));
+        if let Some(codec) = video_codec {
             command.arg("-c:v").arg(codec);
         }
         if let Some(bitrate) = options.video_bitrate.as_deref() {
@@ -152,14 +190,22 @@ fn run_ffmpeg(
         if let Some(preset) = options.preset.as_deref() {
             command.arg("-preset").arg(preset);
         }
-        if let Some(codec) = options.audio_codec.as_deref() {
+        let audio_codec = options
+            .audio_codec
+            .as_deref()
+            .or_else(|| default_audio_codec(dest_ext, dest_kind));
+        if let Some(codec) = audio_codec {
             command.arg("-c:a").arg(codec);
         }
         if let Some(bitrate) = options.audio_bitrate.as_deref() {
             command.arg("-b:a").arg(bitrate);
         }
     } else if dest_kind == MediaKind::Audio {
-        if let Some(codec) = options.audio_codec.as_deref() {
+        let audio_codec = options
+            .audio_codec
+            .as_deref()
+            .or_else(|| default_audio_codec(dest_ext, dest_kind));
+        if let Some(codec) = audio_codec {
             command.arg("-c:a").arg(codec);
         }
         if let Some(bitrate) = options.audio_bitrate.as_deref() {
@@ -167,12 +213,20 @@ fn run_ffmpeg(
         }
     }
     command.arg("-progress").arg("pipe:1");
-    let mut child = command
+    let mut child = match command
         .arg(dest)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("failed to execute ffmpeg")?;
+    {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            bail!("ffmpeg not found; install it (e.g., apt install ffmpeg)");
+        }
+        Err(err) => {
+            return Err(anyhow::Error::new(err)).context("failed to execute ffmpeg");
+        }
+    };
 
     if let Some(stdout) = child.stdout.take() {
         stream_progress(stdout, duration_seconds);
@@ -238,6 +292,7 @@ fn decide_ffmpeg_mode(plan: &Plan, info: Option<&crate::ffprobe::MediaInfo>) -> 
 fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>) {
     let reader = BufReader::new(stdout);
     let mut last_percent: Option<f64> = None;
+    let mut last_elapsed: Option<f64> = None;
     for line in reader.lines().map_while(Result::ok) {
         if line == "progress=end" {
             if duration_seconds.is_some() && last_percent.is_none_or(|percent| percent < 99.5) {
@@ -251,18 +306,20 @@ fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>) {
         let Ok(ms) = value.trim().parse::<u64>() else {
             continue;
         };
-        let Some(duration) = duration_seconds else {
-            continue;
-        };
         let elapsed = ms as f64 / 1_000_000.0;
-        if duration <= 0.0 {
-            continue;
-        }
-        let percent = ((elapsed / duration) * 100.0).min(100.0);
-        if last_percent.is_none_or(|last| (percent - last).abs() >= 1.0) {
-            let remaining = (duration - elapsed).max(0.0);
-            println!("Progress: {:.0}% eta {:.1}s", percent, remaining);
-            last_percent = Some(percent);
+        if let Some(duration) = duration_seconds {
+            if duration <= 0.0 {
+                continue;
+            }
+            let percent = ((elapsed / duration) * 100.0).min(100.0);
+            if last_percent.is_none_or(|last| (percent - last).abs() >= 1.0) {
+                let remaining = (duration - elapsed).max(0.0);
+                println!("Progress: {:.0}% eta {:.1}s", percent, remaining);
+                last_percent = Some(percent);
+            }
+        } else if last_elapsed.is_none_or(|last| (elapsed - last).abs() >= 1.0) {
+            println!("Progress: {:.1}s elapsed", elapsed);
+            last_elapsed = Some(elapsed);
         }
     }
 }
@@ -306,4 +363,28 @@ fn ensure_parent_dir(destination: &Path) -> Result<()> {
         .context("destination must have a parent directory")?;
     fs::create_dir_all(parent).context("failed to create destination directory")?;
     Ok(())
+}
+
+fn backup_existing(destination: &Path) -> Result<()> {
+    let backup_path = next_backup_path(destination)?;
+    fs::rename(destination, &backup_path).context("failed to backup destination")?;
+    Ok(())
+}
+
+fn next_backup_path(destination: &Path) -> Result<PathBuf> {
+    let mut base = destination.as_os_str().to_os_string();
+    base.push(".bak");
+    let candidate = PathBuf::from(&base);
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+    for index in 1..=1000 {
+        let mut next = base.clone();
+        next.push(format!(".{}", index));
+        let candidate = PathBuf::from(next);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    bail!("could not find available backup path");
 }

@@ -37,7 +37,13 @@ pub fn probe_media(path: &Path) -> Result<MediaInfo> {
         .arg("json")
         .arg(path)
         .output()
-        .context("failed to execute ffprobe")?;
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!("ffprobe not found; install ffmpeg (e.g., apt install ffmpeg)")
+            } else {
+                anyhow::Error::new(err).context("failed to execute ffprobe")
+            }
+        })?;
 
     if !output.status.success() {
         anyhow::bail!("ffprobe exited with status {}", output.status);

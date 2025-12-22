@@ -134,3 +134,109 @@ fn stream_copy_forced_audio_fails() {
         "stream-copy should fail for audio conversion"
     );
 }
+
+#[test]
+fn stream_copy_forced_video_succeeds() {
+    if !tool_available("ffmpeg") {
+        eprintln!("skipping video stream copy test; ffmpeg not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let input = temp_dir.path().join("input.mp4");
+    let output = temp_dir.path().join("output.mov");
+
+    let create_status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=32x32:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=0.2",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+        ])
+        .arg(&input)
+        .status()
+        .expect("ffmpeg failed to run");
+    if !create_status.success() {
+        eprintln!("skipping video stream copy test; ffmpeg cannot create mp4");
+        return;
+    }
+
+    let status = Command::new(mvx_bin())
+        .arg(&input)
+        .arg(&output)
+        .arg("--stream-copy")
+        .status()
+        .expect("mvx failed to run");
+    assert!(status.success(), "mvx stream-copy conversion failed");
+    ensure_non_empty(&output);
+}
+
+#[test]
+fn transcode_with_codec_flags() {
+    if !tool_available("ffmpeg") {
+        eprintln!("skipping codec flag test; ffmpeg not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let input = temp_dir.path().join("input.mkv");
+    let output = temp_dir.path().join("output.mp4");
+
+    let create_status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=32x32:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=0.2",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+        ])
+        .arg(&input)
+        .status()
+        .expect("ffmpeg failed to run");
+    if !create_status.success() {
+        eprintln!("skipping codec flag test; ffmpeg cannot create mkv");
+        return;
+    }
+
+    let status = Command::new(mvx_bin())
+        .arg(&input)
+        .arg(&output)
+        .args([
+            "--transcode",
+            "--video-codec",
+            "libx264",
+            "--audio-codec",
+            "aac",
+        ])
+        .status()
+        .expect("mvx failed to run");
+    assert!(status.success(), "mvx codec flag conversion failed");
+    ensure_non_empty(&output);
+}

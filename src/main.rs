@@ -27,6 +27,9 @@ struct Cli {
     /// Overwrite destination if it exists
     #[arg(long)]
     overwrite: bool,
+    /// Backup destination if it exists (adds .bak, .bak.1, ...)
+    #[arg(long)]
+    backup: bool,
     /// Move (delete source) instead of keeping the source
     #[arg(long)]
     move_source: bool,
@@ -61,10 +64,14 @@ fn main() -> Result<()> {
     if cli.stream_copy && cli.transcode {
         anyhow::bail!("--stream-copy and --transcode are mutually exclusive");
     }
+    if cli.overwrite && cli.backup {
+        anyhow::bail!("--overwrite and --backup are mutually exclusive");
+    }
     let plan = plan::build_plan(
         &cli.source,
         &cli.destination,
         cli.move_source,
+        cli.backup,
         plan::ConversionOptions {
             image_quality: cli.image_quality,
             video_bitrate: cli.video_bitrate,

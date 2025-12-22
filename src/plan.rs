@@ -24,6 +24,7 @@ pub struct Plan {
     pub backend: Option<Backend>,
     pub notes: Vec<String>,
     pub move_source: bool,
+    pub backup: bool,
     pub options: ConversionOptions,
     pub dest_ext: Option<String>,
     pub dest_kind: MediaKind,
@@ -79,6 +80,7 @@ pub fn build_plan(
     source: &Path,
     destination: &Path,
     move_source: bool,
+    backup: bool,
     options: ConversionOptions,
 ) -> Result<Plan> {
     if source == destination {
@@ -133,6 +135,7 @@ pub fn build_plan(
         backend,
         notes,
         move_source,
+        backup,
         options,
         dest_ext,
         dest_kind,
@@ -209,9 +212,16 @@ pub fn render_plan(plan: &Plan, overwrite: bool) -> String {
             }
         ));
     }
+    if let Some(command) = command_preview(plan) {
+        lines.push(format!("Command preview: {}", command));
+    }
     lines.push(format!(
         "Overwrite: {}",
         if overwrite { "yes" } else { "no" }
+    ));
+    lines.push(format!(
+        "Backup: {}",
+        if plan.backup { "yes" } else { "no" }
     ));
     for note in &plan.notes {
         lines.push(format!("Note: {}", note));
@@ -408,6 +418,125 @@ fn option_warnings(
     notes
 }
 
+pub fn default_video_codec(dest_ext: Option<&str>) -> Option<&'static str> {
+    match dest_ext {
+        Some("mp4") | Some("mov") => Some("libx264"),
+        Some("webm") => Some("libvpx-vp9"),
+        Some("mkv") | Some("avi") => Some("libx264"),
+        _ => None,
+    }
+}
+
+pub fn default_audio_codec(dest_ext: Option<&str>, dest_kind: MediaKind) -> Option<&'static str> {
+    if dest_kind == MediaKind::Audio {
+        return match dest_ext {
+            Some("mp3") => Some("libmp3lame"),
+            Some("flac") => Some("flac"),
+            Some("wav") => Some("pcm_s16le"),
+            Some("opus") => Some("libopus"),
+            Some("ogg") => Some("libvorbis"),
+            Some("m4a") | Some("aac") => Some("aac"),
+            _ => None,
+        };
+    }
+    match dest_ext {
+        Some("mp4") | Some("mov") => Some("aac"),
+        Some("webm") => Some("libopus"),
+        Some("mkv") | Some("avi") => Some("aac"),
+        _ => None,
+    }
+}
+
+fn command_preview(plan: &Plan) -> Option<String> {
+    let backend = plan.backend?;
+    let source = plan.source.display();
+    let destination = plan.destination.display();
+    match backend {
+        Backend::ImageMagick => {
+            let mut args = vec![format!("magick {}", source)];
+            if let Some(quality) = plan.options.image_quality {
+                args.push(format!("-quality {}", quality));
+            }
+            args.push(format!("{}", destination));
+            Some(args.join(" "))
+        }
+        Backend::Ffmpeg => {
+            let mut base = vec![format!("ffmpeg -i {}", source)];
+            let dest_ext = plan.dest_ext.as_deref();
+            match plan.options.ffmpeg_preference {
+                FfmpegPreference::StreamCopy => {
+                    base.push("-c copy".to_string());
+                    base.push(format!("{}", destination));
+                    return Some(base.join(" "));
+                }
+                FfmpegPreference::Transcode => {}
+                FfmpegPreference::Auto => {
+                    let mut copy = base.clone();
+                    copy.push("-c copy".to_string());
+                    copy.push(format!("{}", destination));
+                    let transcode = ffmpeg_transcode_args(plan, dest_ext);
+                    let mut transcode_cmd = base;
+                    transcode_cmd.extend(transcode);
+                    transcode_cmd.push(format!("{}", destination));
+                    return Some(format!(
+                        "{} (if compatible), else {}",
+                        copy.join(" "),
+                        transcode_cmd.join(" ")
+                    ));
+                }
+            }
+            let transcode = ffmpeg_transcode_args(plan, dest_ext);
+            base.extend(transcode);
+            base.push(format!("{}", destination));
+            Some(base.join(" "))
+        }
+    }
+}
+
+fn ffmpeg_transcode_args(plan: &Plan, dest_ext: Option<&str>) -> Vec<String> {
+    let mut args = Vec::new();
+    if plan.dest_kind == MediaKind::Video {
+        let video_codec = plan
+            .options
+            .video_codec
+            .as_deref()
+            .or_else(|| default_video_codec(dest_ext));
+        if let Some(codec) = video_codec {
+            args.push(format!("-c:v {}", codec));
+        }
+        if let Some(bitrate) = plan.options.video_bitrate.as_deref() {
+            args.push(format!("-b:v {}", bitrate));
+        }
+        if let Some(preset) = plan.options.preset.as_deref() {
+            args.push(format!("-preset {}", preset));
+        }
+        let audio_codec = plan
+            .options
+            .audio_codec
+            .as_deref()
+            .or_else(|| default_audio_codec(dest_ext, plan.dest_kind));
+        if let Some(codec) = audio_codec {
+            args.push(format!("-c:a {}", codec));
+        }
+        if let Some(bitrate) = plan.options.audio_bitrate.as_deref() {
+            args.push(format!("-b:a {}", bitrate));
+        }
+    } else if plan.dest_kind == MediaKind::Audio {
+        let audio_codec = plan
+            .options
+            .audio_codec
+            .as_deref()
+            .or_else(|| default_audio_codec(dest_ext, plan.dest_kind));
+        if let Some(codec) = audio_codec {
+            args.push(format!("-c:a {}", codec));
+        }
+        if let Some(bitrate) = plan.options.audio_bitrate.as_deref() {
+            args.push(format!("-b:a {}", bitrate));
+        }
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,10 +557,10 @@ mod tests {
         let src = Path::new("a.jpg");
         let dst = Path::new("b.jpeg");
 
-        let plan_copy = build_plan(src, dst, false, ConversionOptions::default()).unwrap();
+        let plan_copy = build_plan(src, dst, false, false, ConversionOptions::default()).unwrap();
         assert_eq!(plan_copy.strategy, Strategy::CopyOnly);
 
-        let plan_rename = build_plan(src, dst, true, ConversionOptions::default()).unwrap();
+        let plan_rename = build_plan(src, dst, true, false, ConversionOptions::default()).unwrap();
         assert_eq!(plan_rename.strategy, Strategy::RenameOnly);
     }
 
@@ -439,7 +568,7 @@ mod tests {
     fn plan_selects_convert() {
         let src = Path::new("a.png");
         let dst = Path::new("b.jpg");
-        let plan = build_plan(src, dst, false, ConversionOptions::default()).unwrap();
+        let plan = build_plan(src, dst, false, false, ConversionOptions::default()).unwrap();
         assert_eq!(plan.strategy, Strategy::Convert);
     }
 
@@ -449,6 +578,7 @@ mod tests {
             Path::new("a.png"),
             Path::new("b.jpg"),
             false,
+            false,
             ConversionOptions::default(),
         )
         .unwrap();
@@ -457,6 +587,7 @@ mod tests {
         let media_plan = build_plan(
             Path::new("a.mp4"),
             Path::new("b.webm"),
+            false,
             false,
             ConversionOptions::default(),
         )
@@ -470,7 +601,13 @@ mod tests {
             image_quality: Some(0),
             ..ConversionOptions::default()
         };
-        let result = build_plan(Path::new("a.png"), Path::new("b.jpg"), false, options);
+        let result = build_plan(
+            Path::new("a.png"),
+            Path::new("b.jpg"),
+            false,
+            false,
+            options,
+        );
         assert!(result.is_err());
     }
 
@@ -480,7 +617,13 @@ mod tests {
             preset: Some("fastish".to_string()),
             ..ConversionOptions::default()
         };
-        let result = build_plan(Path::new("a.mp4"), Path::new("b.webm"), false, options);
+        let result = build_plan(
+            Path::new("a.mp4"),
+            Path::new("b.webm"),
+            false,
+            false,
+            options,
+        );
         assert!(result.is_err());
     }
 
@@ -490,7 +633,13 @@ mod tests {
             audio_bitrate: Some("12kbps".to_string()),
             ..ConversionOptions::default()
         };
-        let result = build_plan(Path::new("a.wav"), Path::new("b.mp3"), false, options);
+        let result = build_plan(
+            Path::new("a.wav"),
+            Path::new("b.mp3"),
+            false,
+            false,
+            options,
+        );
         assert!(result.is_err());
     }
 
@@ -500,7 +649,13 @@ mod tests {
             video_codec: Some("  ".to_string()),
             ..ConversionOptions::default()
         };
-        let result = build_plan(Path::new("a.mp4"), Path::new("b.webm"), false, options);
+        let result = build_plan(
+            Path::new("a.mp4"),
+            Path::new("b.webm"),
+            false,
+            false,
+            options,
+        );
         assert!(result.is_err());
     }
 }
