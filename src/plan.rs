@@ -13,6 +13,7 @@ pub enum Strategy {
 pub enum Backend {
     ImageMagick,
     Ffmpeg,
+    LibreOffice,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +61,7 @@ pub enum MediaKind {
     Image,
     Audio,
     Video,
+    Document,
     Other,
 }
 
@@ -170,6 +172,7 @@ pub fn render_plan(plan: &Plan, overwrite: bool) -> String {
             match backend {
                 Backend::ImageMagick => "imagemagick",
                 Backend::Ffmpeg => "ffmpeg",
+                Backend::LibreOffice => "libreoffice",
             }
         ));
     }
@@ -179,6 +182,7 @@ pub fn render_plan(plan: &Plan, overwrite: bool) -> String {
             MediaKind::Image => "image",
             MediaKind::Audio => "audio",
             MediaKind::Video => "video",
+            MediaKind::Document => "document",
             MediaKind::Other => "other",
         }
     ));
@@ -247,6 +251,9 @@ fn select_backend(source_ext: Option<&str>, dest_ext: Option<&str>) -> Option<Ba
     if is_media_ext(source_ext) && is_media_ext(dest_ext) {
         return Some(Backend::Ffmpeg);
     }
+    if is_document_ext(source_ext) && dest_ext == Some("pdf") {
+        return Some(Backend::LibreOffice);
+    }
     None
 }
 
@@ -295,9 +302,30 @@ fn classify_dest_kind(ext: Option<&str>) -> MediaKind {
         MediaKind::Audio
     } else if is_video_ext(ext) {
         MediaKind::Video
+    } else if is_document_ext(ext) || ext == Some("pdf") {
+        MediaKind::Document
     } else {
         MediaKind::Other
     }
+}
+
+fn is_document_ext(ext: Option<&str>) -> bool {
+    matches!(
+        ext,
+        Some(
+            "doc"
+                | "docx"
+                | "ppt"
+                | "pptx"
+                | "xls"
+                | "xlsx"
+                | "odt"
+                | "odp"
+                | "ods"
+                | "rtf"
+                | "txt"
+        )
+    )
 }
 
 fn validate_options(options: &ConversionOptions) -> Result<()> {
@@ -371,6 +399,16 @@ fn option_warnings(
     let mut notes = Vec::new();
     if dest_kind != MediaKind::Image && options.image_quality.is_some() {
         notes.push("image quality ignored for non-image output".to_string());
+    }
+    if dest_kind == MediaKind::Document
+        && (options.image_quality.is_some()
+            || options.video_bitrate.is_some()
+            || options.audio_bitrate.is_some()
+            || options.preset.is_some()
+            || options.video_codec.is_some()
+            || options.audio_codec.is_some())
+    {
+        notes.push("media options ignored for document conversions".to_string());
     }
     if dest_kind == MediaKind::Audio {
         if options.video_bitrate.is_some() {
@@ -490,6 +528,10 @@ fn command_preview(plan: &Plan) -> Option<String> {
             base.push(format!("{}", destination));
             Some(base.join(" "))
         }
+        Backend::LibreOffice => Some(format!(
+            "soffice --headless --convert-to pdf --outdir <temp> {}",
+            source
+        )),
     }
 }
 
@@ -593,6 +635,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(media_plan.backend, Some(Backend::Ffmpeg));
+
+        let doc_plan = build_plan(
+            Path::new("a.docx"),
+            Path::new("b.pdf"),
+            false,
+            false,
+            ConversionOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(doc_plan.backend, Some(Backend::LibreOffice));
     }
 
     #[test]

@@ -16,6 +16,16 @@ fn tool_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn tool_available_with_args(name: &str, args: &[&str]) -> bool {
+    Command::new(name)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn run_status(mut command: Command) -> bool {
     command.status().map(|s| s.success()).unwrap_or(false)
 }
@@ -238,5 +248,27 @@ fn transcode_with_codec_flags() {
         .status()
         .expect("mvx failed to run");
     assert!(status.success(), "mvx codec flag conversion failed");
+    ensure_non_empty(&output);
+}
+
+#[test]
+fn converts_document_with_libreoffice() {
+    if !tool_available_with_args("soffice", &["--version"]) {
+        eprintln!("skipping document conversion test; LibreOffice not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let input = temp_dir.path().join("input.txt");
+    let output = temp_dir.path().join("output.pdf");
+
+    std::fs::write(&input, "mvx test document").expect("write input");
+
+    let status = Command::new(mvx_bin())
+        .arg(&input)
+        .arg(&output)
+        .status()
+        .expect("mvx failed to run");
+    assert!(status.success(), "mvx document conversion failed");
     ensure_non_empty(&output);
 }

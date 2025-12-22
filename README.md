@@ -13,6 +13,7 @@ Common examples:
 - Convert image: `mvx image.png image.jpg`
 - Convert audio: `mvx input.wav output.flac`
 - Convert video: `mvx clip.mov clip.mp4`
+- Convert document: `mvx report.docx report.pdf`
 - Show plan only: `mvx --plan input.png output.jpg`
 
 Plan output includes backend selection, ffmpeg mode, and a command preview.
@@ -76,6 +77,7 @@ mvx shells out to external tools for conversions:
 - ImageMagick (`magick` or `convert`) for images
 - ffmpeg for audio and video
 - ffprobe for media inspection and stream-copy decisions
+- LibreOffice (`soffice`) for document to PDF conversions
 
 If a required tool is missing, mvx fails with an install hint. ffprobe is optional; without it mvx falls back to transcode.
 
@@ -103,6 +105,10 @@ If a required tool is missing, mvx fails with an install hint. ffprobe is option
   - `webm`: `libvpx-vp9` + `libopus`
   - `mkv`/`avi`: `libx264` + `aac`
   - audio outputs: `mp3`→`libmp3lame`, `flac`→`flac`, `wav`→`pcm_s16le`, `opus`→`libopus`, `ogg`→`libvorbis`, `m4a`/`aac`→`aac`
+
+- Document conversions:
+  - Supported inputs: `doc`, `docx`, `ppt`, `pptx`, `xls`, `xlsx`, `odt`, `odp`, `ods`, `rtf`, `txt`
+  - Output: `pdf` via LibreOffice headless
 
 ## Development
 

@@ -94,6 +94,9 @@ fn convert(plan: &Plan, overwrite: bool) -> Result<()> {
                 info.as_ref().and_then(|i| i.duration_seconds),
             )?;
         }
+        Backend::LibreOffice => {
+            run_libreoffice(&plan.source, &temp_path)?;
+        }
     }
 
     ensure_non_empty(&temp_path)?;
@@ -235,6 +238,52 @@ fn run_ffmpeg(
     let status = child.wait().context("failed to wait for ffmpeg")?;
 
     handle_status(status, "ffmpeg")
+}
+
+fn run_libreoffice(source: &Path, dest: &Path) -> Result<()> {
+    if dest.extension().and_then(|ext| ext.to_str()) != Some("pdf") {
+        bail!("LibreOffice conversions only support PDF output");
+    }
+    let out_dir = dest
+        .parent()
+        .context("destination must have a parent directory")?;
+    let status = Command::new("soffice")
+        .arg("--headless")
+        .arg("--convert-to")
+        .arg("pdf")
+        .arg("--outdir")
+        .arg(out_dir)
+        .arg(source)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status();
+
+    let status = match status {
+        Ok(status) => status,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            bail!("LibreOffice not found; install libreoffice (e.g., apt install libreoffice)");
+        }
+        Err(err) => {
+            return Err(anyhow::Error::new(err)).context("failed to execute LibreOffice");
+        }
+    };
+
+    handle_status(status, "LibreOffice")?;
+
+    let expected = out_dir.join(
+        source
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(|stem| format!("{stem}.pdf"))
+            .context("source file must have a name")?,
+    );
+    if expected != dest {
+        if dest.exists() {
+            fs::remove_file(dest).context("failed to remove existing destination")?;
+        }
+        fs::rename(&expected, dest).context("failed to finalize LibreOffice output")?;
+    }
+    Ok(())
 }
 
 fn decide_ffmpeg_mode(plan: &Plan, info: Option<&crate::ffprobe::MediaInfo>) -> FfmpegMode {

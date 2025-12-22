@@ -20,7 +20,7 @@ mvx is a planned Linux CLI that combines rename and format conversion into one a
 - `cargo test`: Run unit/integration tests.
 - `cargo fmt`: Format Rust code.
 - `cargo clippy`: Lint Rust code.
-- `mvx` conversions require external tools installed (ImageMagick for images, ffmpeg/ffprobe for audio/video).
+- `mvx` conversions require external tools installed (ImageMagick for images, ffmpeg/ffprobe for audio/video, LibreOffice for documents).
 
 ## Coding Style & Naming Conventions
 - Rust: 4-space indentation, `snake_case` for functions/modules, `CamelCase` for types, and `SCREAMING_SNAKE_CASE` for constants.
