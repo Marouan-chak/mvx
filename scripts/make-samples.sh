@@ -25,5 +25,19 @@ else
 fi
 
 printf "%s\n" "mvx document sample" > "${OUT_DIR}/input.txt"
+printf "%s\n" "name,value" > "${OUT_DIR}/input.csv"
+printf "%s\n" "mvx rtf sample" > "${OUT_DIR}/input.rtf"
+
+if command -v soffice >/dev/null 2>&1; then
+  soffice --headless --convert-to docx --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
+  soffice --headless --convert-to odt --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
+  soffice --headless --convert-to rtf --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
+  soffice --headless --convert-to xlsx --outdir "${OUT_DIR}" "${OUT_DIR}/input.csv" || true
+  soffice --headless --convert-to ods --outdir "${OUT_DIR}" "${OUT_DIR}/input.csv" || true
+  soffice --headless --convert-to pptx --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
+  soffice --headless --convert-to odp --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
+else
+  echo "LibreOffice not found; skipping document samples" >&2
+fi
 
 echo "Samples written to ${OUT_DIR}"

@@ -36,8 +36,10 @@ if [[ -f "${SAMPLES_DIR}/input.mp4" ]]; then
   run cargo run -- --stream-copy "${SAMPLES_DIR}/input.mp4" "${SAMPLES_DIR}/output.mov"
 fi
 
-if [[ -f "${SAMPLES_DIR}/input.txt" ]]; then
-  run cargo run -- "${SAMPLES_DIR}/input.txt" "${SAMPLES_DIR}/output.pdf"
-fi
+for doc in "${SAMPLES_DIR}"/input.{txt,rtf,docx,odt,pptx,odp,xlsx,ods}; do
+  if [[ -f "${doc}" ]]; then
+    run cargo run -- "${doc}" "${doc%.*}.pdf"
+  fi
+done
 
 echo "mvx sample tests completed."
