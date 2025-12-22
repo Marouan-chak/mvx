@@ -25,6 +25,11 @@ cargo build --release
 ./target/release/mvx --help
 ```
 
+Generate local sample files:
+```
+scripts/make-samples.sh
+```
+
 ## Usage and Options
 
 Basic form:
