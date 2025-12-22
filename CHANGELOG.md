@@ -11,6 +11,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Spinner progress for ImageMagick and LibreOffice conversions.
+
 ## [0.1.5] - 2025-12-22
 
 ### Added

@@ -149,7 +149,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    execute::execute_plan(&plan, cli.overwrite).context("execution failed")?;
+    execute::execute_plan(&plan, cli.overwrite, cli.json).context("execution failed")?;
     if cli.json {
         let output = serde_json::json!({
             "status": "ok",
@@ -223,7 +223,7 @@ fn run_batch(cli: &Cli, options: plan::ConversionOptions) -> Result<()> {
             ok += 1;
             continue;
         }
-        match execute::execute_plan(&plan, cli.overwrite) {
+        match execute::execute_plan(&plan, cli.overwrite, cli.json) {
             Ok(_) => ok += 1,
             Err(err) => failed.push((source, err)),
         }

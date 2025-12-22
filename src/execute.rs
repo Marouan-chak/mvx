@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempfile::Builder;
 
-pub fn execute_plan(plan: &Plan, overwrite: bool) -> Result<()> {
+pub fn execute_plan(plan: &Plan, overwrite: bool, json_output: bool) -> Result<()> {
     ensure_parent_dir(&plan.destination)?;
     if plan.destination.exists() {
         if plan.backup {
@@ -22,7 +22,7 @@ pub fn execute_plan(plan: &Plan, overwrite: bool) -> Result<()> {
     match plan.strategy {
         Strategy::RenameOnly => rename_only(&plan.source, &plan.destination, overwrite),
         Strategy::CopyOnly => copy_only(&plan.source, &plan.destination, overwrite),
-        Strategy::Convert => convert(plan, overwrite),
+        Strategy::Convert => convert(plan, overwrite, json_output),
     }
 }
 
@@ -52,7 +52,7 @@ fn copy_only(source: &Path, destination: &Path, overwrite: bool) -> Result<()> {
     Ok(())
 }
 
-fn convert(plan: &Plan, overwrite: bool) -> Result<()> {
+fn convert(plan: &Plan, overwrite: bool, json_output: bool) -> Result<()> {
     let backend = plan
         .backend
         .context("no backend available for conversion")?;
@@ -67,7 +67,9 @@ fn convert(plan: &Plan, overwrite: bool) -> Result<()> {
     let temp_path = temp_output_path(temp_dir.path(), &plan.destination);
 
     match backend {
-        Backend::ImageMagick => run_imagemagick(&plan.source, &temp_path, &plan.options)?,
+        Backend::ImageMagick => {
+            run_imagemagick(&plan.source, &temp_path, &plan.options, json_output)?
+        }
         Backend::Ffmpeg => {
             let info = match probe_media(&plan.source) {
                 Ok(info) => Some(info),
@@ -92,10 +94,11 @@ fn convert(plan: &Plan, overwrite: bool) -> Result<()> {
                 plan.dest_ext.as_deref(),
                 mode,
                 info.as_ref().and_then(|i| i.duration_seconds),
+                json_output,
             )?;
         }
         Backend::LibreOffice => {
-            run_libreoffice(&plan.source, &temp_path)?;
+            run_libreoffice(&plan.source, &temp_path, json_output)?;
         }
     }
 
@@ -113,6 +116,7 @@ fn run_imagemagick(
     source: &Path,
     dest: &Path,
     options: &crate::plan::ConversionOptions,
+    json_output: bool,
 ) -> Result<()> {
     let mut command = Command::new("magick");
     if source.extension().and_then(|ext| ext.to_str()) == Some("pdf")
@@ -131,10 +135,7 @@ fn run_imagemagick(
         command.arg("-quality").arg(quality.to_string());
     }
     command.arg(dest);
-    let status = command
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .status();
+    let status = run_command_with_spinner(command, "ImageMagick", json_output);
 
     let status = match status {
         Ok(status) => status,
@@ -145,11 +146,7 @@ fn run_imagemagick(
                 command.arg("-quality").arg(quality.to_string());
             }
             command.arg(dest);
-            let status = match command
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .status()
-            {
+            let status = match run_command_with_spinner(command, "ImageMagick", json_output) {
                 Ok(status) => status,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     bail!("ImageMagick not found; install it (e.g., apt install imagemagick)");
@@ -169,6 +166,7 @@ fn run_imagemagick(
     handle_status(status, "ImageMagick")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_ffmpeg(
     source: &Path,
     dest: &Path,
@@ -177,6 +175,7 @@ fn run_ffmpeg(
     dest_ext: Option<&str>,
     mode: FfmpegMode,
     duration_seconds: Option<f64>,
+    json_output: bool,
 ) -> Result<()> {
     let mut command = Command::new("ffmpeg");
     command
@@ -243,7 +242,7 @@ fn run_ffmpeg(
     };
 
     if let Some(stdout) = child.stdout.take() {
-        stream_progress(stdout, duration_seconds);
+        stream_progress(stdout, duration_seconds, json_output);
     }
 
     let status = child.wait().context("failed to wait for ffmpeg")?;
@@ -251,23 +250,28 @@ fn run_ffmpeg(
     handle_status(status, "ffmpeg")
 }
 
-fn run_libreoffice(source: &Path, dest: &Path) -> Result<()> {
+fn run_libreoffice(source: &Path, dest: &Path, json_output: bool) -> Result<()> {
     if dest.extension().and_then(|ext| ext.to_str()) != Some("pdf") {
         bail!("LibreOffice conversions only support PDF output");
     }
     let out_dir = dest
         .parent()
         .context("destination must have a parent directory")?;
-    let status = Command::new("soffice")
-        .arg("--headless")
-        .arg("--convert-to")
-        .arg("pdf")
-        .arg("--outdir")
-        .arg(out_dir)
-        .arg(source)
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .status();
+    let status = run_command_with_spinner(
+        {
+            let mut command = Command::new("soffice");
+            command
+                .arg("--headless")
+                .arg("--convert-to")
+                .arg("pdf")
+                .arg("--outdir")
+                .arg(out_dir)
+                .arg(source);
+            command
+        },
+        "LibreOffice",
+        json_output,
+    );
 
     let status = match status {
         Ok(status) => status,
@@ -349,12 +353,15 @@ fn decide_ffmpeg_mode(plan: &Plan, info: Option<&crate::ffprobe::MediaInfo>) -> 
     }
 }
 
-fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>) {
+fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, json_output: bool) {
     let reader = BufReader::new(stdout);
     let mut last_percent: Option<f64> = None;
     let mut last_elapsed: Option<f64> = None;
     for line in reader.lines().map_while(Result::ok) {
         if line == "progress=end" {
+            if json_output {
+                continue;
+            }
             if duration_seconds.is_some() && last_percent.is_none_or(|percent| percent < 99.5) {
                 println!("Progress: 100%");
             }
@@ -372,14 +379,59 @@ fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>) {
                 continue;
             }
             let percent = ((elapsed / duration) * 100.0).min(100.0);
+            if json_output {
+                continue;
+            }
             if last_percent.is_none_or(|last| (percent - last).abs() >= 1.0) {
                 let remaining = (duration - elapsed).max(0.0);
                 println!("Progress: {:.0}% eta {:.1}s", percent, remaining);
                 last_percent = Some(percent);
             }
-        } else if last_elapsed.is_none_or(|last| (elapsed - last).abs() >= 1.0) {
+        } else if !json_output && last_elapsed.is_none_or(|last| (elapsed - last).abs() >= 1.0) {
             println!("Progress: {:.1}s elapsed", elapsed);
             last_elapsed = Some(elapsed);
+        }
+    }
+}
+
+fn run_command_with_spinner(
+    mut command: Command,
+    label: &str,
+    json_output: bool,
+) -> std::io::Result<std::process::ExitStatus> {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    if json_output {
+        return command
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .status();
+    }
+
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let spinner = ['|', '/', '-', '\\'];
+    let start = Instant::now();
+    let mut idx = 0usize;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let elapsed = start.elapsed().as_secs_f32();
+                eprintln!("\r{label} done in {:.1}s", elapsed);
+                return Ok(status);
+            }
+            Ok(None) => {
+                let elapsed = start.elapsed().as_secs_f32();
+                eprint!("\r{label} {} {:.1}s", spinner[idx], elapsed);
+                let _ = std::io::stderr().flush();
+                idx = (idx + 1) % spinner.len();
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            Err(err) => return Err(err),
         }
     }
 }

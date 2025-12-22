@@ -52,6 +52,7 @@ Examples:
 
 JSON output:
 - `--json` prints machine-readable output for plans and batch summaries.
+- JSON output suppresses progress updates for cleaner parsing.
 
 Config:
 - Default path: `~/.config/mvx/config.toml` (or `XDG_CONFIG_HOME`)
@@ -135,6 +136,7 @@ If a required tool is missing, mvx fails with an install hint. ffprobe is option
 - When stream-copy is used, no re-encoding happens and conversions are much faster.
 - ffmpeg progress is parsed and reported as a percentage with ETA when duration is known.
 - When duration is unknown, progress shows elapsed seconds instead.
+- ImageMagick and LibreOffice conversions show a spinner with elapsed time.
 - Auto stream-copy compatibility targets:
   - `mp4`/`mov`: h264/hevc/mpeg4/av1 video with aac/mp3/alac audio.
   - `webm`: vp8/vp9/av1 video with opus/vorbis audio.
