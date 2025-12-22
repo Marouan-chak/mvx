@@ -122,6 +122,10 @@ The release uploads the Linux `mvx` binary and a SHA-256 checksum.
 
 See `CONTRIBUTING.md` for workflow details and `CHANGELOG.md` for release notes.
 
+## Security
+
+See `SECURITY.md` for reporting guidelines.
+
 ## License
 
 MIT. See `LICENSE`.
