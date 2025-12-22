@@ -22,9 +22,22 @@ jobs:
         run: cargo build --release
       - name: Checksums
         run: sha256sum target/release/mvx > mvx-linux-x86_64.sha256
+      - name: Release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "## Changes"
+            echo
+            awk -v ver="$version" '
+              $0 ~ ("^## \\[" ver "\\]") {found=1; next}
+              found && $0 ~ /^## \[/ {exit}
+              found {print}
+            ' CHANGELOG.md
+          } > RELEASE_NOTES.md
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             target/release/mvx
             mvx-linux-x86_64.sha256

@@ -14,6 +14,8 @@ Common examples:
 - Convert audio: `mvx input.wav output.flac`
 - Convert video: `mvx clip.mov clip.mp4`
 - Convert document: `mvx report.docx report.pdf`
+- Convert PDF to image: `mvx report.pdf report.png`
+- Convert image to PDF: `mvx figure.png figure.pdf`
 - Show plan only: `mvx --plan input.png output.jpg`
 
 Plan output includes backend selection, ffmpeg mode, and a command preview.
@@ -109,6 +111,11 @@ If a required tool is missing, mvx fails with an install hint. ffprobe is option
 - Document conversions:
   - Supported inputs: `doc`, `docx`, `ppt`, `pptx`, `xls`, `xlsx`, `odt`, `odp`, `ods`, `rtf`, `txt`
   - Output: `pdf` via LibreOffice headless
+
+- PDF/image conversions:
+  - Supported: `pdf` ↔ `png/jpg/jpeg/webp/bmp/tiff`
+  - PDF to image converts the first page by default.
+  - Requires ImageMagick with PDF read/write support (Ghostscript).
 
 ## Development
 

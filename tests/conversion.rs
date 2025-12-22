@@ -26,6 +26,43 @@ fn tool_available_with_args(name: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn imagemagick_pdf_support() -> (bool, bool) {
+    let output = if tool_available("magick") {
+        Command::new("magick").args(["-list", "format"]).output()
+    } else if tool_available("convert") {
+        Command::new("convert").args(["-list", "format"]).output()
+    } else {
+        return (false, false);
+    };
+
+    let output = match output {
+        Ok(output) if output.status.success() => output.stdout,
+        _ => return (false, false),
+    };
+    let text = String::from_utf8_lossy(&output);
+    let mut read = false;
+    let mut write = false;
+    for line in text.lines() {
+        let line = line.trim_start();
+        if !line.starts_with("PDF") {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let modes = parts[1];
+        if modes.contains('r') {
+            read = true;
+        }
+        if modes.contains('w') {
+            write = true;
+        }
+        break;
+    }
+    (read, write)
+}
+
 fn run_status(mut command: Command) -> bool {
     command.status().map(|s| s.success()).unwrap_or(false)
 }
@@ -270,5 +307,84 @@ fn converts_document_with_libreoffice() {
         .status()
         .expect("mvx failed to run");
     assert!(status.success(), "mvx document conversion failed");
+    ensure_non_empty(&output);
+}
+
+#[test]
+fn converts_image_to_pdf_with_imagemagick() {
+    let (_pdf_read, pdf_write) = imagemagick_pdf_support();
+    if !pdf_write {
+        eprintln!("skipping image->pdf test; ImageMagick PDF write not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let input = temp_dir.path().join("input.png");
+    let output = temp_dir.path().join("output.pdf");
+
+    let create = if tool_available("magick") {
+        let mut command = Command::new("magick");
+        command.args(["-size", "16x16", "xc:skyblue"]).arg(&input);
+        command
+    } else {
+        let mut command = Command::new("convert");
+        command.args(["-size", "16x16", "xc:skyblue"]).arg(&input);
+        command
+    };
+    assert!(run_status(create), "failed to create input image");
+
+    let status = Command::new(mvx_bin())
+        .arg(&input)
+        .arg(&output)
+        .status()
+        .expect("mvx failed to run");
+    assert!(status.success(), "mvx image->pdf conversion failed");
+    ensure_non_empty(&output);
+}
+
+#[test]
+fn converts_pdf_to_image_with_imagemagick() {
+    let (pdf_read, pdf_write) = imagemagick_pdf_support();
+    if !pdf_read || !pdf_write {
+        eprintln!("skipping pdf->image test; ImageMagick PDF read/write not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("temp dir");
+    let source_image = temp_dir.path().join("input.png");
+    let source_pdf = temp_dir.path().join("input.pdf");
+    let output = temp_dir.path().join("output.png");
+
+    let create = if tool_available("magick") {
+        let mut command = Command::new("magick");
+        command
+            .args(["-size", "16x16", "xc:orange"])
+            .arg(&source_image);
+        command
+    } else {
+        let mut command = Command::new("convert");
+        command
+            .args(["-size", "16x16", "xc:orange"])
+            .arg(&source_image);
+        command
+    };
+    assert!(run_status(create), "failed to create input image");
+
+    let status = Command::new(mvx_bin())
+        .arg(&source_image)
+        .arg(&source_pdf)
+        .status()
+        .expect("mvx failed to run");
+    if !status.success() {
+        eprintln!("skipping pdf->image test; mvx could not create pdf");
+        return;
+    }
+
+    let status = Command::new(mvx_bin())
+        .arg(&source_pdf)
+        .arg(&output)
+        .status()
+        .expect("mvx failed to run");
+    assert!(status.success(), "mvx pdf->image conversion failed");
     ensure_non_empty(&output);
 }

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2025-12-22
+
+### Added
+- PDF/image conversions via ImageMagick (first page for PDF input).
+- ImageMagick PDF capability checks in integration tests.
+
 ## [0.1.2] - 2025-12-22
 
 ### Added

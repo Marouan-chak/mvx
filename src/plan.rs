@@ -123,11 +123,22 @@ pub fn build_plan(
                 "ffprobe may be used at runtime to choose stream copy vs transcode".to_string(),
             );
         }
+        if is_pdf_image_pair(source_ext.as_deref(), dest_ext.as_deref())
+            && source_ext.as_deref() == Some("pdf")
+        {
+            notes.push("PDF to image converts the first page only".to_string());
+        }
     }
     if !move_source {
         notes.push("source will be kept".to_string());
     }
-    notes.extend(option_warnings(&options, dest_kind, backend));
+    notes.extend(option_warnings(
+        &options,
+        dest_kind,
+        backend,
+        source_ext.as_deref(),
+        dest_ext.as_deref(),
+    ));
 
     Ok(Plan {
         source: source.to_path_buf(),
@@ -248,6 +259,9 @@ fn select_backend(source_ext: Option<&str>, dest_ext: Option<&str>) -> Option<Ba
     if is_image_ext(source_ext) && is_image_ext(dest_ext) {
         return Some(Backend::ImageMagick);
     }
+    if is_pdf_image_pair(source_ext, dest_ext) {
+        return Some(Backend::ImageMagick);
+    }
     if is_media_ext(source_ext) && is_media_ext(dest_ext) {
         return Some(Backend::Ffmpeg);
     }
@@ -328,6 +342,11 @@ fn is_document_ext(ext: Option<&str>) -> bool {
     )
 }
 
+fn is_pdf_image_pair(source_ext: Option<&str>, dest_ext: Option<&str>) -> bool {
+    (source_ext == Some("pdf") && is_image_ext(dest_ext))
+        || (dest_ext == Some("pdf") && is_image_ext(source_ext))
+}
+
 fn validate_options(options: &ConversionOptions) -> Result<()> {
     if let Some(quality) = options.image_quality
         && (quality == 0 || quality > 100)
@@ -395,12 +414,15 @@ fn option_warnings(
     options: &ConversionOptions,
     dest_kind: MediaKind,
     backend: Option<Backend>,
+    source_ext: Option<&str>,
+    dest_ext: Option<&str>,
 ) -> Vec<String> {
     let mut notes = Vec::new();
     if dest_kind != MediaKind::Image && options.image_quality.is_some() {
         notes.push("image quality ignored for non-image output".to_string());
     }
     if dest_kind == MediaKind::Document
+        && !is_pdf_image_pair(source_ext, dest_ext)
         && (options.image_quality.is_some()
             || options.video_bitrate.is_some()
             || options.audio_bitrate.is_some()

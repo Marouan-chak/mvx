@@ -115,7 +115,18 @@ fn run_imagemagick(
     options: &crate::plan::ConversionOptions,
 ) -> Result<()> {
     let mut command = Command::new("magick");
-    command.arg(source);
+    if source.extension().and_then(|ext| ext.to_str()) == Some("pdf")
+        && dest
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext != "pdf")
+            == Some(true)
+    {
+        let source_arg = format!("{}[0]", source.display());
+        command.arg(source_arg);
+    } else {
+        command.arg(source);
+    }
     if let Some(quality) = options.image_quality {
         command.arg("-quality").arg(quality.to_string());
     }
