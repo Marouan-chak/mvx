@@ -1,4 +1,5 @@
 use crate::detect::{DetectedType, detect_path};
+use crate::pdf::pdf_page_count;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -128,6 +129,11 @@ pub fn build_plan(
             && source_ext.as_deref() == Some("pdf")
         {
             notes.push("PDF to image converts the first page only".to_string());
+            if let Ok(Some(pages)) = pdf_page_count(source)
+                && pages > 1
+            {
+                notes.push(format!("PDF has {pages} pages"));
+            }
         }
     }
     if !move_source {
@@ -164,6 +170,9 @@ pub fn render_plan(plan: &Plan, overwrite: bool) -> String {
         "Detected: {}",
         plan.detected.mime.as_deref().unwrap_or("unknown")
     ));
+    if let Some(mime) = plan.detected.file_mime.as_deref() {
+        lines.push(format!("Detected (file): {}", mime));
+    }
     if let Some(ext) = plan.detected.ext_hint.as_deref() {
         lines.push(format!("Detected extension: {}", ext));
     }
@@ -251,6 +260,7 @@ struct PlanJson {
     source: String,
     destination: String,
     detected_mime: Option<String>,
+    detected_file_mime: Option<String>,
     detected_extension: Option<String>,
     strategy: String,
     backend: Option<String>,
@@ -279,6 +289,7 @@ pub fn render_plan_json(plan: &Plan, overwrite: bool) -> Result<String> {
         source: plan.source.display().to_string(),
         destination: plan.destination.display().to_string(),
         detected_mime: plan.detected.mime.clone(),
+        detected_file_mime: plan.detected.file_mime.clone(),
         detected_extension: plan.detected.ext_hint.clone(),
         strategy: match plan.strategy {
             Strategy::RenameOnly => "rename".to_string(),

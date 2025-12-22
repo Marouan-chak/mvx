@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - JSON output for plans and batch summaries.
+- `file(1)` MIME fallback detection.
+- PDF page count hints via `pdfinfo`.
 
 ## [0.1.5] - 2025-12-22
 

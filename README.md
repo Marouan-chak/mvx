@@ -115,6 +115,8 @@ mvx shells out to external tools for conversions:
 - ffmpeg for audio and video
 - ffprobe for media inspection and stream-copy decisions
 - LibreOffice (`soffice`) for document to PDF conversions
+- `file(1)` for MIME fallback detection
+- `pdfinfo` (from poppler) for PDF page count hints
 
 If a required tool is missing, mvx fails with an install hint. ffprobe is optional; without it mvx falls back to transcode.
 

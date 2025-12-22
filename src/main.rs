@@ -3,6 +3,7 @@ mod config;
 mod detect;
 mod execute;
 mod ffprobe;
+mod pdf;
 mod plan;
 
 use anyhow::{Context, Result};
