@@ -50,6 +50,9 @@ Examples:
 - Convert a directory to mp3: `mvx --batch --dest-dir out --to-ext mp3 --input ./audio`
 - Read inputs from stdin: `printf '%s\n' a.wav b.wav | mvx --batch --dest-dir out --to-ext mp3 --stdin`
 
+JSON output:
+- `--json` prints machine-readable output for plans and batch summaries.
+
 Config:
 - Default path: `~/.config/mvx/config.toml` (or `XDG_CONFIG_HOME`)
 - `--config <path>`: override config path

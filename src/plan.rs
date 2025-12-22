@@ -1,5 +1,6 @@
 use crate::detect::{DetectedType, detect_path};
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +244,79 @@ pub fn render_plan(plan: &Plan, overwrite: bool) -> String {
     }
 
     lines.join("\n")
+}
+
+#[derive(Serialize)]
+struct PlanJson {
+    source: String,
+    destination: String,
+    detected_mime: Option<String>,
+    detected_extension: Option<String>,
+    strategy: String,
+    backend: Option<String>,
+    destination_kind: String,
+    destination_extension: Option<String>,
+    overwrite: bool,
+    backup: bool,
+    options: OptionsJson,
+    notes: Vec<String>,
+    command_preview: Option<String>,
+}
+
+#[derive(Serialize)]
+struct OptionsJson {
+    image_quality: Option<u8>,
+    video_bitrate: Option<String>,
+    audio_bitrate: Option<String>,
+    preset: Option<String>,
+    video_codec: Option<String>,
+    audio_codec: Option<String>,
+    ffmpeg_mode: String,
+}
+
+pub fn render_plan_json(plan: &Plan, overwrite: bool) -> Result<String> {
+    let output = PlanJson {
+        source: plan.source.display().to_string(),
+        destination: plan.destination.display().to_string(),
+        detected_mime: plan.detected.mime.clone(),
+        detected_extension: plan.detected.ext_hint.clone(),
+        strategy: match plan.strategy {
+            Strategy::RenameOnly => "rename".to_string(),
+            Strategy::CopyOnly => "copy".to_string(),
+            Strategy::Convert => "convert".to_string(),
+        },
+        backend: plan.backend.map(|backend| match backend {
+            Backend::ImageMagick => "imagemagick".to_string(),
+            Backend::Ffmpeg => "ffmpeg".to_string(),
+            Backend::LibreOffice => "libreoffice".to_string(),
+        }),
+        destination_kind: match plan.dest_kind {
+            MediaKind::Image => "image".to_string(),
+            MediaKind::Audio => "audio".to_string(),
+            MediaKind::Video => "video".to_string(),
+            MediaKind::Document => "document".to_string(),
+            MediaKind::Other => "other".to_string(),
+        },
+        destination_extension: plan.dest_ext.clone(),
+        overwrite,
+        backup: plan.backup,
+        options: OptionsJson {
+            image_quality: plan.options.image_quality,
+            video_bitrate: plan.options.video_bitrate.clone(),
+            audio_bitrate: plan.options.audio_bitrate.clone(),
+            preset: plan.options.preset.clone(),
+            video_codec: plan.options.video_codec.clone(),
+            audio_codec: plan.options.audio_codec.clone(),
+            ffmpeg_mode: match plan.options.ffmpeg_preference {
+                FfmpegPreference::Auto => "auto".to_string(),
+                FfmpegPreference::StreamCopy => "stream-copy".to_string(),
+                FfmpegPreference::Transcode => "transcode".to_string(),
+            },
+        },
+        notes: plan.notes.clone(),
+        command_preview: command_preview(plan),
+    };
+    Ok(serde_json::to_string_pretty(&output)?)
 }
 
 fn normalize_ext(path: &Path) -> Option<String> {

@@ -83,6 +83,9 @@ struct Cli {
     /// Force ffmpeg transcode (re-encode)
     #[arg(long)]
     transcode: bool,
+    /// Emit JSON output
+    #[arg(long)]
+    json: bool,
 }
 
 fn main() -> Result<()> {
@@ -137,11 +140,23 @@ fn main() -> Result<()> {
         .context("failed to build plan")?;
 
     if cli.plan || cli.dry_run {
-        println!("{}", plan::render_plan(&plan, cli.overwrite));
+        if cli.json {
+            println!("{}", plan::render_plan_json(&plan, cli.overwrite)?);
+        } else {
+            println!("{}", plan::render_plan(&plan, cli.overwrite));
+        }
         return Ok(());
     }
 
     execute::execute_plan(&plan, cli.overwrite).context("execution failed")?;
+    if cli.json {
+        let output = serde_json::json!({
+            "status": "ok",
+            "source": plan.source.display().to_string(),
+            "destination": plan.destination.display().to_string()
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
     Ok(())
 }
 
@@ -198,8 +213,12 @@ fn run_batch(cli: &Cli, options: plan::ConversionOptions) -> Result<()> {
             }
         };
         if cli.plan || cli.dry_run {
-            println!("---");
-            println!("{}", plan::render_plan(&plan, cli.overwrite));
+            if cli.json {
+                println!("{}", plan::render_plan_json(&plan, cli.overwrite)?);
+            } else {
+                println!("---");
+                println!("{}", plan::render_plan(&plan, cli.overwrite));
+            }
             ok += 1;
             continue;
         }
@@ -210,13 +229,31 @@ fn run_batch(cli: &Cli, options: plan::ConversionOptions) -> Result<()> {
     }
 
     let total = ok + failed.len();
-    println!(
-        "Batch summary: total {total}, succeeded {ok}, failed {}",
-        failed.len()
-    );
+    if cli.json {
+        let output = serde_json::json!({
+            "status": if failed.is_empty() { "ok" } else { "failed" },
+            "total": total,
+            "succeeded": ok,
+            "failed": failed.len(),
+            "failures": failed.iter().map(|(source, err)| {
+                serde_json::json!({
+                    "source": source.display().to_string(),
+                    "error": err.to_string()
+                })
+            }).collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!(
+            "Batch summary: total {total}, succeeded {ok}, failed {}",
+            failed.len()
+        );
+    }
     if !failed.is_empty() {
-        for (source, err) in failed {
-            println!("Fail: {} -> {}", source.display(), err);
+        if !cli.json {
+            for (source, err) in failed {
+                println!("Fail: {} -> {}", source.display(), err);
+            }
         }
         anyhow::bail!("batch completed with failures");
     }
