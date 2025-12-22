@@ -42,6 +42,14 @@ mvx <source> <destination> [--plan|--dry-run] [--overwrite|--backup] [--move-sou
 `--stream-copy` and `--transcode` are mutually exclusive.
 `--overwrite` and `--backup` are mutually exclusive.
 
+Batch mode:
+```
+mvx --batch --dest-dir <dir> [--to-ext mp3] [--input <path>...] [--stdin] [--recursive]
+```
+Examples:
+- Convert a directory to mp3: `mvx --batch --dest-dir out --to-ext mp3 --input ./audio`
+- Read inputs from stdin: `printf '%s\n' a.wav b.wav | mvx --batch --dest-dir out --to-ext mp3 --stdin`
+
 Config:
 - Default path: `~/.config/mvx/config.toml` (or `XDG_CONFIG_HOME`)
 - `--config <path>`: override config path
@@ -70,6 +78,12 @@ Conversion tuning:
 - `--stream-copy`: Force ffmpeg stream copy (no re-encode) when possible.
 - `--transcode`: Force ffmpeg re-encode.
 - `--backup`: If destination exists, move it to `*.bak` (or `*.bak.N`) before writing.
+- `--batch`: Enable batch mode for multiple inputs.
+- `--dest-dir <dir>`: Output directory for batch mode.
+- `--to-ext <ext>`: Replace extension for batch outputs.
+- `--input <path>`: Additional input paths for batch mode.
+- `--stdin`: Read input paths from stdin (newline-separated).
+- `--recursive`: Recurse into directories in batch mode.
 
 Options are validated and ignored when they do not apply (for example, `--video-bitrate` on audio-only outputs).
 

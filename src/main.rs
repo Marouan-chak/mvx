@@ -1,3 +1,4 @@
+mod batch;
 mod config;
 mod detect;
 mod execute;
@@ -15,10 +16,10 @@ use std::path::PathBuf;
     about = "Move or convert files based on destination extension"
 )]
 struct Cli {
-    /// Source file path
-    source: PathBuf,
-    /// Destination file path
-    destination: PathBuf,
+    /// Source file path (single mode)
+    source: Option<PathBuf>,
+    /// Destination file path (single mode)
+    destination: Option<PathBuf>,
     /// Show the plan without executing
     #[arg(long)]
     plan: bool,
@@ -31,6 +32,24 @@ struct Cli {
     /// Backup destination if it exists (adds .bak, .bak.1, ...)
     #[arg(long)]
     backup: bool,
+    /// Enable batch mode
+    #[arg(long)]
+    batch: bool,
+    /// Destination directory for batch mode
+    #[arg(long, requires = "batch")]
+    dest_dir: Option<PathBuf>,
+    /// Additional inputs for batch mode (repeatable)
+    #[arg(long)]
+    input: Vec<String>,
+    /// Read inputs from stdin (newline-separated)
+    #[arg(long)]
+    stdin: bool,
+    /// Recurse into directories for batch mode
+    #[arg(long)]
+    recursive: bool,
+    /// Change destination extension for batch mode (e.g., mp3)
+    #[arg(long)]
+    to_ext: Option<String>,
     /// Path to config file (defaults to XDG config path)
     #[arg(long)]
     config: Option<PathBuf>,
@@ -84,20 +103,20 @@ fn main() -> Result<()> {
     if let Some(value) = cli.image_quality {
         options.image_quality = Some(value);
     }
-    if let Some(value) = cli.video_bitrate {
-        options.video_bitrate = Some(value);
+    if let Some(value) = cli.video_bitrate.as_deref() {
+        options.video_bitrate = Some(value.to_string());
     }
-    if let Some(value) = cli.audio_bitrate {
-        options.audio_bitrate = Some(value);
+    if let Some(value) = cli.audio_bitrate.as_deref() {
+        options.audio_bitrate = Some(value.to_string());
     }
-    if let Some(value) = cli.preset {
-        options.preset = Some(value);
+    if let Some(value) = cli.preset.as_deref() {
+        options.preset = Some(value.to_string());
     }
-    if let Some(value) = cli.video_codec {
-        options.video_codec = Some(value);
+    if let Some(value) = cli.video_codec.as_deref() {
+        options.video_codec = Some(value.to_string());
     }
-    if let Some(value) = cli.audio_codec {
-        options.audio_codec = Some(value);
+    if let Some(value) = cli.audio_codec.as_deref() {
+        options.audio_codec = Some(value.to_string());
     }
     options.ffmpeg_preference = if cli.stream_copy {
         plan::FfmpegPreference::StreamCopy
@@ -107,14 +126,15 @@ fn main() -> Result<()> {
         options.ffmpeg_preference
     };
 
-    let plan = plan::build_plan(
-        &cli.source,
-        &cli.destination,
-        cli.move_source,
-        cli.backup,
-        options,
-    )
-    .context("failed to build plan")?;
+    if cli.batch {
+        run_batch(&cli, options)?;
+        return Ok(());
+    }
+
+    let source = cli.source.context("source is required")?;
+    let destination = cli.destination.context("destination is required")?;
+    let plan = plan::build_plan(&source, &destination, cli.move_source, cli.backup, options)
+        .context("failed to build plan")?;
 
     if cli.plan || cli.dry_run {
         println!("{}", plan::render_plan(&plan, cli.overwrite));
@@ -123,4 +143,95 @@ fn main() -> Result<()> {
 
     execute::execute_plan(&plan, cli.overwrite).context("execution failed")?;
     Ok(())
+}
+
+fn run_batch(cli: &Cli, options: plan::ConversionOptions) -> Result<()> {
+    let dest_dir = cli
+        .dest_dir
+        .as_ref()
+        .context("batch mode requires --dest-dir")?;
+
+    let mut inputs = Vec::new();
+    if let Some(source) = cli.source.as_ref() {
+        inputs.push(source.to_string_lossy().to_string());
+    }
+    inputs.extend(cli.input.iter().cloned());
+
+    let stdin_sources = if cli.stdin {
+        read_stdin_lines()?
+    } else {
+        Vec::new()
+    };
+
+    let sources = batch::collect_sources(&inputs, stdin_sources, cli.recursive)?;
+    if sources.is_empty() {
+        anyhow::bail!("no inputs provided for batch mode");
+    }
+
+    let batch_input = batch::BatchInput {
+        dest_dir: dest_dir.clone(),
+        to_ext: cli.to_ext.clone(),
+    };
+
+    let mut ok = 0usize;
+    let mut failed = Vec::new();
+
+    for source in sources {
+        let destination = match batch::dest_for_source(&batch_input, &source) {
+            Ok(dest) => dest,
+            Err(err) => {
+                failed.push((source, err));
+                continue;
+            }
+        };
+        let plan = match plan::build_plan(
+            &source,
+            &destination,
+            cli.move_source,
+            cli.backup,
+            options.clone(),
+        ) {
+            Ok(plan) => plan,
+            Err(err) => {
+                failed.push((source, err));
+                continue;
+            }
+        };
+        if cli.plan || cli.dry_run {
+            println!("---");
+            println!("{}", plan::render_plan(&plan, cli.overwrite));
+            ok += 1;
+            continue;
+        }
+        match execute::execute_plan(&plan, cli.overwrite) {
+            Ok(_) => ok += 1,
+            Err(err) => failed.push((source, err)),
+        }
+    }
+
+    let total = ok + failed.len();
+    println!(
+        "Batch summary: total {total}, succeeded {ok}, failed {}",
+        failed.len()
+    );
+    if !failed.is_empty() {
+        for (source, err) in failed {
+            println!("Fail: {} -> {}", source.display(), err);
+        }
+        anyhow::bail!("batch completed with failures");
+    }
+    Ok(())
+}
+
+fn read_stdin_lines() -> Result<Vec<String>> {
+    use std::io::Read;
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("read stdin")?;
+    Ok(input
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect())
 }
