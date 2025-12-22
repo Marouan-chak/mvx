@@ -1,3 +1,4 @@
+mod config;
 mod detect;
 mod execute;
 mod ffprobe;
@@ -30,6 +31,12 @@ struct Cli {
     /// Backup destination if it exists (adds .bak, .bak.1, ...)
     #[arg(long)]
     backup: bool,
+    /// Path to config file (defaults to XDG config path)
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Config profile name
+    #[arg(long)]
+    profile: Option<String>,
     /// Move (delete source) instead of keeping the source
     #[arg(long)]
     move_source: bool,
@@ -67,26 +74,45 @@ fn main() -> Result<()> {
     if cli.overwrite && cli.backup {
         anyhow::bail!("--overwrite and --backup are mutually exclusive");
     }
+    let mut options = plan::ConversionOptions::default();
+    if let Some(config_options) =
+        config::load_options(cli.config.as_deref(), cli.profile.as_deref())?
+    {
+        options = config_options;
+    }
+
+    if let Some(value) = cli.image_quality {
+        options.image_quality = Some(value);
+    }
+    if let Some(value) = cli.video_bitrate {
+        options.video_bitrate = Some(value);
+    }
+    if let Some(value) = cli.audio_bitrate {
+        options.audio_bitrate = Some(value);
+    }
+    if let Some(value) = cli.preset {
+        options.preset = Some(value);
+    }
+    if let Some(value) = cli.video_codec {
+        options.video_codec = Some(value);
+    }
+    if let Some(value) = cli.audio_codec {
+        options.audio_codec = Some(value);
+    }
+    options.ffmpeg_preference = if cli.stream_copy {
+        plan::FfmpegPreference::StreamCopy
+    } else if cli.transcode {
+        plan::FfmpegPreference::Transcode
+    } else {
+        options.ffmpeg_preference
+    };
+
     let plan = plan::build_plan(
         &cli.source,
         &cli.destination,
         cli.move_source,
         cli.backup,
-        plan::ConversionOptions {
-            image_quality: cli.image_quality,
-            video_bitrate: cli.video_bitrate,
-            audio_bitrate: cli.audio_bitrate,
-            preset: cli.preset,
-            video_codec: cli.video_codec,
-            audio_codec: cli.audio_codec,
-            ffmpeg_preference: if cli.stream_copy {
-                plan::FfmpegPreference::StreamCopy
-            } else if cli.transcode {
-                plan::FfmpegPreference::Transcode
-            } else {
-                plan::FfmpegPreference::Auto
-            },
-        },
+        options,
     )
     .context("failed to build plan")?;
 

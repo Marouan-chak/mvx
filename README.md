@@ -42,6 +42,24 @@ mvx <source> <destination> [--plan|--dry-run] [--overwrite|--backup] [--move-sou
 `--stream-copy` and `--transcode` are mutually exclusive.
 `--overwrite` and `--backup` are mutually exclusive.
 
+Config:
+- Default path: `~/.config/mvx/config.toml` (or `XDG_CONFIG_HOME`)
+- `--config <path>`: override config path
+- `--profile <name>`: select a named profile
+
+Example config:
+```
+[default]
+image_quality = 85
+video_bitrate = "2500k"
+preset = "fast"
+ffmpeg_preference = "auto"
+
+[profile.high]
+video_bitrate = "5000k"
+preset = "slow"
+```
+
 Conversion tuning:
 - `--image-quality <1-100>`: ImageMagick quality for image conversions.
 - `--video-bitrate <n[k|m]>`: Target video bitrate for ffmpeg conversions (e.g., `2500k`).

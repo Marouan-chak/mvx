@@ -9,6 +9,7 @@ mvx is a planned Linux CLI that combines rename and format conversion into one a
 - `src/execute.rs`: Execution pipeline for rename/copy operations.
 - `src/detect.rs`: File type sniffing helpers.
 - `src/ffprobe.rs`: ffprobe wrapper for media inspection.
+- `src/config.rs`: Config file and profile loading.
 - `tests/conversion.rs`: Integration tests for ImageMagick and ffmpeg conversions.
 - `presentation.md`: Product overview, behavior, and UX requirements.
 - `tech_choices.md`: Proposed Rust crates and external toolchain.
