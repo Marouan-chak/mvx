@@ -34,8 +34,7 @@ if command -v soffice >/dev/null 2>&1; then
   soffice --headless --convert-to rtf --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
   soffice --headless --convert-to xlsx --outdir "${OUT_DIR}" "${OUT_DIR}/input.csv" || true
   soffice --headless --convert-to ods --outdir "${OUT_DIR}" "${OUT_DIR}/input.csv" || true
-  soffice --headless --convert-to pptx --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
-  soffice --headless --convert-to odp --outdir "${OUT_DIR}" "${OUT_DIR}/input.txt" || true
+  echo "Skipping pptx/odp generation: requires a presentation source file." >&2
 else
   echo "LibreOffice not found; skipping document samples" >&2
 fi
