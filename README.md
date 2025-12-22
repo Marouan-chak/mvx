@@ -1,16 +1,29 @@
 # mvx
 
-mvx is a Linux CLI that combines renaming and conversion into one action. You pass a source path and a destination path; mvx detects the real input type, selects a strategy (rename, copy, or convert), and performs a safe output write.
+[![CI](https://github.com/Marouan-chak/mvx/actions/workflows/ci.yml/badge.svg)](https://github.com/Marouan-chak/mvx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Marouan-chak/mvx?include_prereleases)](https://github.com/Marouan-chak/mvx/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+mvx is a Linux CLI that combines rename and format conversion into a single command. It detects the real input type, chooses the safest strategy, and writes outputs atomically.
 
 ## Quick Start
 
-Examples:
+Common examples:
 - Rename only: `mvx photo.jpeg photo.jpg`
 - Convert image: `mvx image.png image.jpg`
 - Convert audio: `mvx input.wav output.flac`
 - Convert video: `mvx clip.mov clip.mp4`
 - Show plan only: `mvx --plan input.png output.jpg`
-  - Plan output includes backend selection, ffmpeg mode, and a command preview.
+
+Plan output includes backend selection, ffmpeg mode, and a command preview.
+
+## Install
+
+Build from source:
+```
+cargo build --release
+./target/release/mvx --help
+```
 
 ## Usage and Options
 
@@ -33,6 +46,24 @@ Conversion tuning:
 - `--backup`: If destination exists, move it to `*.bak` (or `*.bak.N`) before writing.
 
 Options are validated and ignored when they do not apply (for example, `--video-bitrate` on audio-only outputs).
+
+## Plan Output
+
+Sample:
+```
+Source: input.mov
+Destination: output.mp4
+Detected: video/quicktime
+Detected extension: mov
+Strategy: convert
+Destination extension: mp4
+Backend: ffmpeg
+Destination kind: video
+FFmpeg mode: auto
+Command preview: ffmpeg -i input.mov -c copy output.mp4 (if compatible), else ffmpeg -i input.mov -c:v libx264 -c:a aac output.mp4
+Overwrite: no
+Backup: no
+```
 
 ## Dependencies
 
@@ -86,3 +117,11 @@ Tagging a version triggers the GitHub Actions release workflow:
 - `git push origin v0.1.0`
 
 The release uploads the Linux `mvx` binary and a SHA-256 checksum.
+
+## Contributing
+
+See `CONTRIBUTING.md` for workflow details and `CHANGELOG.md` for release notes.
+
+## License
+
+MIT. See `LICENSE`.
