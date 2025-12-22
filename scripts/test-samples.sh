@@ -18,6 +18,7 @@ run() {
 run cargo run -- --plan "${SAMPLES_DIR}/input.png" "${SAMPLES_DIR}/output.jpg"
 run cargo run -- --plan "${SAMPLES_DIR}/input.wav" "${SAMPLES_DIR}/output.flac"
 run cargo run -- --plan "${SAMPLES_DIR}/input.mp4" "${SAMPLES_DIR}/output.webm"
+run cargo run -- --plan "${SAMPLES_DIR}/input.txt" "${SAMPLES_DIR}/output.pdf"
 
 # Image conversion
 if [[ -f "${SAMPLES_DIR}/input.png" ]]; then
@@ -33,6 +34,10 @@ fi
 if [[ -f "${SAMPLES_DIR}/input.mp4" ]]; then
   run cargo run -- --transcode "${SAMPLES_DIR}/input.mp4" "${SAMPLES_DIR}/output.webm"
   run cargo run -- --stream-copy "${SAMPLES_DIR}/input.mp4" "${SAMPLES_DIR}/output.mov"
+fi
+
+if [[ -f "${SAMPLES_DIR}/input.txt" ]]; then
+  run cargo run -- "${SAMPLES_DIR}/input.txt" "${SAMPLES_DIR}/output.pdf"
 fi
 
 echo "mvx sample tests completed."

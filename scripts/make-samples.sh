@@ -24,4 +24,6 @@ else
   echo "ffmpeg not found; skipping audio/video samples" >&2
 fi
 
+printf "%s\n" "mvx document sample" > "${OUT_DIR}/input.txt"
+
 echo "Samples written to ${OUT_DIR}"
