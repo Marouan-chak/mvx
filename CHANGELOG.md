@@ -21,6 +21,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.9] - 2025-12-22
+
+### Added
+- Interactive TUI mode (`--tui`) with a full option editor, live progress, queue view, and activity log.
+- Default interactive mode when running in a terminal (opt out with `--no-tui`).
+- TUI file browser, recent paths picker, and path autocomplete.
+- Run screen now supports returning to the wizard after completion.
+
 ## [0.1.5] - 2025-12-22
 
 ### Added

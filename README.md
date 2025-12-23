@@ -6,9 +6,16 @@
 
 mvx is a Linux CLI that combines rename and format conversion into a single command. It detects the real input type, chooses the safest strategy, and writes outputs atomically.
 
+mvx launches an interactive TUI wizard by default. Use `--no-tui` to run it directly from the command line.
+
 ## Quick Start
 
-Common examples:
+Interactive TUI:
+- `mvx` to open the wizard
+- Use `b` to browse, `r` for recent paths, `Tab` to autocomplete while editing
+- Press `F5` to run, then `b` to return or `q` to exit
+
+CLI examples:
 - Rename only: `mvx photo.jpeg photo.jpg`
 - Convert image: `mvx image.png image.jpg`
 - Convert audio: `mvx input.wav output.flac`
@@ -33,6 +40,16 @@ Generate local sample files:
 scripts/make-samples.sh
 ```
 
+## Features
+
+- Interactive TUI wizard with file browser, recent paths, and autocomplete
+- Safe atomic writes with optional backup and overwrite controls
+- Batch mode with glob/dir/STDIN inputs
+- JSON output for plans and summaries
+- Document conversions via LibreOffice
+- Media conversions via ffmpeg with stream-copy decisions via ffprobe
+- PDF ↔ image conversions via ImageMagick (first page by default)
+
 ## Usage and Options
 
 Basic form:
@@ -41,6 +58,8 @@ mvx <source> <destination> [--plan|--dry-run] [--overwrite|--backup] [--move-sou
 ```
 `--stream-copy` and `--transcode` are mutually exclusive.
 `--overwrite` and `--backup` are mutually exclusive.
+`--tui` and `--json` are mutually exclusive.
+`--no-tui` runs in command-line mode.
 
 Batch mode:
 ```
@@ -49,6 +68,14 @@ mvx --batch --dest-dir <dir> [--to-ext mp3] [--input <path>...] [--stdin] [--rec
 Examples:
 - Convert a directory to mp3: `mvx --batch --dest-dir out --to-ext mp3 --input ./audio`
 - Read inputs from stdin: `printf '%s\n' a.wav b.wav | mvx --batch --dest-dir out --to-ext mp3 --stdin`
+
+TUI mode:
+- Default launch: `mvx`
+- Single file (prefilled): `mvx --tui input.mov output.mp4`
+- Batch mode: `mvx --batch --dest-dir out --to-ext mp3 --input ./audio --tui`
+- `b` browse, `r` recent, `Tab` autocomplete while editing
+- After a run finishes, press `b` to return or `q` to exit
+- Recent paths are stored in `~/.config/mvx/history.txt` (respects `XDG_CONFIG_HOME`)
 
 JSON output:
 - `--json` prints machine-readable output for plans and batch summaries.
@@ -88,6 +115,8 @@ Conversion tuning:
 - `--input <path>`: Additional input paths for batch mode.
 - `--stdin`: Read input paths from stdin (newline-separated).
 - `--recursive`: Recurse into directories in batch mode.
+- `--tui`: Show an interactive terminal UI while conversions run.
+- `--no-tui`: Run without the TUI wizard.
 
 Options are validated and ignored when they do not apply (for example, `--video-bitrate` on audio-only outputs).
 

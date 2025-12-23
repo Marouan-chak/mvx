@@ -7,9 +7,113 @@ use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 use tempfile::Builder;
 
+#[derive(Debug, Clone)]
+pub enum ProgressEvent {
+    Started {
+        label: String,
+    },
+    Spinner {
+        label: String,
+        elapsed: f32,
+        message: String,
+    },
+    Progress {
+        label: String,
+        percent: f64,
+        eta: Option<f64>,
+    },
+    Finished {
+        label: String,
+        ok: bool,
+        message: String,
+    },
+}
+
+pub enum ProgressMode {
+    Console { json_output: bool },
+    Tui { sender: Sender<ProgressEvent> },
+}
+
+pub struct ProgressReporter {
+    mode: ProgressMode,
+}
+
+impl ProgressReporter {
+    pub fn console(json_output: bool) -> Self {
+        Self {
+            mode: ProgressMode::Console { json_output },
+        }
+    }
+
+    pub fn tui(sender: Sender<ProgressEvent>) -> Self {
+        Self {
+            mode: ProgressMode::Tui { sender },
+        }
+    }
+
+    fn started(&self, label: &str) {
+        if let ProgressMode::Tui { sender } = &self.mode {
+            let _ = sender.send(ProgressEvent::Started {
+                label: label.to_string(),
+            });
+        }
+    }
+
+    fn spinner_tick(&self, label: &str, elapsed: f32, message: &str) {
+        if let ProgressMode::Tui { sender } = &self.mode {
+            let _ = sender.send(ProgressEvent::Spinner {
+                label: label.to_string(),
+                elapsed,
+                message: message.to_string(),
+            });
+        }
+    }
+
+    fn progress(&self, label: &str, percent: f64, eta: Option<f64>) {
+        if let ProgressMode::Tui { sender } = &self.mode {
+            let _ = sender.send(ProgressEvent::Progress {
+                label: label.to_string(),
+                percent,
+                eta,
+            });
+        }
+    }
+
+    fn finished(&self, label: &str, ok: bool, message: &str) {
+        if let ProgressMode::Tui { sender } = &self.mode {
+            let _ = sender.send(ProgressEvent::Finished {
+                label: label.to_string(),
+                ok,
+                message: message.to_string(),
+            });
+        }
+    }
+
+    fn json_output(&self) -> bool {
+        matches!(self.mode, ProgressMode::Console { json_output: true })
+    }
+
+    fn should_print(&self) -> bool {
+        matches!(self.mode, ProgressMode::Console { json_output: false })
+    }
+}
+
 pub fn execute_plan(plan: &Plan, overwrite: bool, json_output: bool) -> Result<()> {
+    let reporter = ProgressReporter::console(json_output);
+    execute_plan_with_reporter(plan, overwrite, &reporter)
+}
+
+pub fn execute_plan_with_reporter(
+    plan: &Plan,
+    overwrite: bool,
+    reporter: &ProgressReporter,
+) -> Result<()> {
+    let label = plan.source.display().to_string();
+    reporter.started(&label);
     ensure_parent_dir(&plan.destination)?;
     if plan.destination.exists() {
         if plan.backup {
@@ -19,11 +123,17 @@ pub fn execute_plan(plan: &Plan, overwrite: bool, json_output: bool) -> Result<(
         }
     }
 
-    match plan.strategy {
+    let result = match plan.strategy {
         Strategy::RenameOnly => rename_only(&plan.source, &plan.destination, overwrite),
         Strategy::CopyOnly => copy_only(&plan.source, &plan.destination, overwrite),
-        Strategy::Convert => convert(plan, overwrite, json_output),
-    }
+        Strategy::Convert => convert(plan, overwrite, reporter, &label),
+    };
+    let finished_message = match &result {
+        Ok(_) => "ok".to_string(),
+        Err(err) => err.to_string(),
+    };
+    reporter.finished(&label, result.is_ok(), &finished_message);
+    result
 }
 
 fn rename_only(source: &Path, destination: &Path, overwrite: bool) -> Result<()> {
@@ -52,7 +162,7 @@ fn copy_only(source: &Path, destination: &Path, overwrite: bool) -> Result<()> {
     Ok(())
 }
 
-fn convert(plan: &Plan, overwrite: bool, json_output: bool) -> Result<()> {
+fn convert(plan: &Plan, overwrite: bool, reporter: &ProgressReporter, label: &str) -> Result<()> {
     let backend = plan
         .backend
         .context("no backend available for conversion")?;
@@ -68,7 +178,7 @@ fn convert(plan: &Plan, overwrite: bool, json_output: bool) -> Result<()> {
 
     match backend {
         Backend::ImageMagick => {
-            run_imagemagick(&plan.source, &temp_path, &plan.options, json_output)?
+            run_imagemagick(&plan.source, &temp_path, &plan.options, reporter, label)?
         }
         Backend::Ffmpeg => {
             let info = match probe_media(&plan.source) {
@@ -94,11 +204,12 @@ fn convert(plan: &Plan, overwrite: bool, json_output: bool) -> Result<()> {
                 plan.dest_ext.as_deref(),
                 mode,
                 info.as_ref().and_then(|i| i.duration_seconds),
-                json_output,
+                reporter,
+                label,
             )?;
         }
         Backend::LibreOffice => {
-            run_libreoffice(&plan.source, &temp_path, json_output)?;
+            run_libreoffice(&plan.source, &temp_path, reporter, label)?;
         }
     }
 
@@ -116,7 +227,8 @@ fn run_imagemagick(
     source: &Path,
     dest: &Path,
     options: &crate::plan::ConversionOptions,
-    json_output: bool,
+    reporter: &ProgressReporter,
+    label: &str,
 ) -> Result<()> {
     let mut command = Command::new("magick");
     if source.extension().and_then(|ext| ext.to_str()) == Some("pdf")
@@ -135,7 +247,7 @@ fn run_imagemagick(
         command.arg("-quality").arg(quality.to_string());
     }
     command.arg(dest);
-    let status = run_command_with_spinner(command, "ImageMagick", json_output);
+    let status = run_command_with_spinner(command, "ImageMagick", reporter, label);
 
     let status = match status {
         Ok(status) => status,
@@ -146,7 +258,7 @@ fn run_imagemagick(
                 command.arg("-quality").arg(quality.to_string());
             }
             command.arg(dest);
-            let status = match run_command_with_spinner(command, "ImageMagick", json_output) {
+            let status = match run_command_with_spinner(command, "ImageMagick", reporter, label) {
                 Ok(status) => status,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     bail!("ImageMagick not found; install it (e.g., apt install imagemagick)");
@@ -175,7 +287,8 @@ fn run_ffmpeg(
     dest_ext: Option<&str>,
     mode: FfmpegMode,
     duration_seconds: Option<f64>,
-    json_output: bool,
+    reporter: &ProgressReporter,
+    label: &str,
 ) -> Result<()> {
     let mut command = Command::new("ffmpeg");
     command
@@ -242,7 +355,7 @@ fn run_ffmpeg(
     };
 
     if let Some(stdout) = child.stdout.take() {
-        stream_progress(stdout, duration_seconds, json_output);
+        stream_progress(stdout, duration_seconds, reporter, label);
     }
 
     let status = child.wait().context("failed to wait for ffmpeg")?;
@@ -250,7 +363,12 @@ fn run_ffmpeg(
     handle_status(status, "ffmpeg")
 }
 
-fn run_libreoffice(source: &Path, dest: &Path, json_output: bool) -> Result<()> {
+fn run_libreoffice(
+    source: &Path,
+    dest: &Path,
+    reporter: &ProgressReporter,
+    label: &str,
+) -> Result<()> {
     if dest.extension().and_then(|ext| ext.to_str()) != Some("pdf") {
         bail!("LibreOffice conversions only support PDF output");
     }
@@ -270,7 +388,8 @@ fn run_libreoffice(source: &Path, dest: &Path, json_output: bool) -> Result<()> 
             command
         },
         "LibreOffice",
-        json_output,
+        reporter,
+        label,
     );
 
     let status = match status {
@@ -353,21 +472,23 @@ fn decide_ffmpeg_mode(plan: &Plan, info: Option<&crate::ffprobe::MediaInfo>) -> 
     }
 }
 
-fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, json_output: bool) {
-    use std::io::Write;
-
+fn stream_progress(
+    stdout: impl std::io::Read,
+    duration_seconds: Option<f64>,
+    reporter: &ProgressReporter,
+    label: &str,
+) {
     let reader = BufReader::new(stdout);
     let mut last_percent: Option<f64> = None;
     let mut last_elapsed: Option<f64> = None;
     for line in reader.lines().map_while(Result::ok) {
         if line == "progress=end" {
-            if json_output {
-                continue;
-            }
-            if duration_seconds.is_some() && last_percent.is_none_or(|percent| percent < 99.5) {
+            if reporter.should_print()
+                && duration_seconds.is_some()
+                && last_percent.is_none_or(|percent| percent < 99.5)
+            {
                 eprintln!("\rffmpeg 100%");
             }
-            let _ = std::io::stderr().flush();
             continue;
         }
         let Some(value) = line.strip_prefix("out_time_ms=") else {
@@ -382,22 +503,25 @@ fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, js
                 continue;
             }
             let percent = ((elapsed / duration) * 100.0).min(100.0);
-            if json_output {
+            reporter.progress(label, percent, Some((duration - elapsed).max(0.0)));
+            if !reporter.should_print() {
                 continue;
             }
             if last_percent.is_none_or(|last| (percent - last).abs() >= 1.0) {
                 let remaining = (duration - elapsed).max(0.0);
                 eprint!("\rffmpeg {:.0}% eta {:.1}s", percent, remaining);
-                let _ = std::io::stderr().flush();
                 last_percent = Some(percent);
             }
-        } else if !json_output && last_elapsed.is_none_or(|last| (elapsed - last).abs() >= 1.0) {
+        } else if last_elapsed.is_none_or(|last| (elapsed - last).abs() >= 1.0) {
+            reporter.progress(label, 0.0, None);
+            if !reporter.should_print() {
+                continue;
+            }
             eprint!("\rffmpeg {:.1}s elapsed", elapsed);
-            let _ = std::io::stderr().flush();
             last_elapsed = Some(elapsed);
         }
     }
-    if !json_output {
+    if reporter.should_print() {
         eprintln!();
     }
 }
@@ -405,12 +529,10 @@ fn stream_progress(stdout: impl std::io::Read, duration_seconds: Option<f64>, js
 fn run_command_with_spinner(
     mut command: Command,
     label: &str,
-    json_output: bool,
+    reporter: &ProgressReporter,
+    source_label: &str,
 ) -> std::io::Result<std::process::ExitStatus> {
-    use std::io::Write;
-    use std::time::{Duration, Instant};
-
-    if json_output {
+    if reporter.json_output() {
         return command
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -422,21 +544,22 @@ fn run_command_with_spinner(
         .stderr(Stdio::inherit())
         .spawn()?;
 
-    let spinner = ['|', '/', '-', '\\'];
     let start = Instant::now();
-    let mut idx = 0usize;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
                 let elapsed = start.elapsed().as_secs_f32();
-                eprintln!("\r{label} done in {:.1}s", elapsed);
+                if reporter.should_print() {
+                    eprintln!("\r{label} done in {:.1}s", elapsed);
+                }
                 return Ok(status);
             }
             Ok(None) => {
                 let elapsed = start.elapsed().as_secs_f32();
-                eprint!("\r{label} {} {:.1}s", spinner[idx], elapsed);
-                let _ = std::io::stderr().flush();
-                idx = (idx + 1) % spinner.len();
+                reporter.spinner_tick(source_label, elapsed, label);
+                if reporter.should_print() {
+                    eprint!("\r{label} ... {:.1}s", elapsed);
+                }
                 std::thread::sleep(Duration::from_millis(150));
             }
             Err(err) => return Err(err),

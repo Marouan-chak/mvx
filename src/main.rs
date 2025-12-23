@@ -5,9 +5,11 @@ mod execute;
 mod ffprobe;
 mod pdf;
 mod plan;
+mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -87,6 +89,12 @@ struct Cli {
     /// Emit JSON output
     #[arg(long)]
     json: bool,
+    /// Enable interactive TUI
+    #[arg(long)]
+    tui: bool,
+    /// Disable interactive TUI
+    #[arg(long)]
+    no_tui: bool,
 }
 
 fn main() -> Result<()> {
@@ -96,6 +104,12 @@ fn main() -> Result<()> {
     }
     if cli.overwrite && cli.backup {
         anyhow::bail!("--overwrite and --backup are mutually exclusive");
+    }
+    if cli.tui && cli.json {
+        anyhow::bail!("--tui and --json are mutually exclusive");
+    }
+    if cli.tui && cli.no_tui {
+        anyhow::bail!("--tui and --no-tui are mutually exclusive");
     }
     let mut options = plan::ConversionOptions::default();
     if let Some(config_options) =
@@ -130,6 +144,40 @@ fn main() -> Result<()> {
         options.ffmpeg_preference
     };
 
+    let use_tui = if cli.tui {
+        true
+    } else if cli.no_tui || cli.json || cli.plan || cli.dry_run {
+        false
+    } else {
+        std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    };
+
+    if use_tui {
+        let defaults = tui::InteractiveDefaults {
+            source: cli.source.clone(),
+            destination: cli.destination.clone(),
+            batch: cli.batch,
+            dest_dir: cli.dest_dir.clone(),
+            inputs: cli.input.clone(),
+            recursive: cli.recursive,
+            to_ext: cli.to_ext.clone(),
+            move_source: cli.move_source,
+            overwrite: cli.overwrite,
+            backup: cli.backup,
+            image_quality: options.image_quality,
+            video_bitrate: options.video_bitrate.clone(),
+            audio_bitrate: options.audio_bitrate.clone(),
+            preset: options.preset.clone(),
+            video_codec: options.video_codec.clone(),
+            audio_codec: options.audio_codec.clone(),
+            ffmpeg_preference: options.ffmpeg_preference,
+            config_path: cli.config.clone(),
+            profile: cli.profile.clone(),
+            plan_only: cli.plan || cli.dry_run,
+        };
+        return tui::run_interactive(defaults);
+    }
+
     if cli.batch {
         run_batch(&cli, options)?;
         return Ok(());
@@ -145,6 +193,13 @@ fn main() -> Result<()> {
             println!("{}", plan::render_plan_json(&plan, cli.overwrite)?);
         } else {
             println!("{}", plan::render_plan(&plan, cli.overwrite));
+        }
+        return Ok(());
+    }
+
+    if cli.tui {
+        match tui::run_single_tui(&plan, cli.overwrite)? {
+            tui::RunOutcome::Exit | tui::RunOutcome::Back => {}
         }
         return Ok(());
     }
@@ -191,6 +246,7 @@ fn run_batch(cli: &Cli, options: plan::ConversionOptions) -> Result<()> {
 
     let mut ok = 0usize;
     let mut failed = Vec::new();
+    let mut plans = Vec::new();
 
     for source in sources {
         let destination = match batch::dest_for_source(&batch_input, &source) {
@@ -221,8 +277,59 @@ fn run_batch(cli: &Cli, options: plan::ConversionOptions) -> Result<()> {
                 println!("{}", plan::render_plan(&plan, cli.overwrite));
             }
             ok += 1;
-            continue;
+        } else {
+            plans.push(plan);
         }
+    }
+
+    if cli.plan || cli.dry_run {
+        let total = ok + failed.len();
+        if cli.json {
+            let output = serde_json::json!({
+                "status": if failed.is_empty() { "ok" } else { "failed" },
+                "total": total,
+                "succeeded": ok,
+                "failed": failed.len(),
+                "failures": failed.iter().map(|(source, err)| {
+                    serde_json::json!({
+                        "source": source.display().to_string(),
+                        "error": err.to_string()
+                    })
+                }).collect::<Vec<_>>()
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            println!(
+                "Batch summary: total {total}, succeeded {ok}, failed {}",
+                failed.len()
+            );
+        }
+        if !failed.is_empty() {
+            if !cli.json {
+                for (source, err) in failed {
+                    println!("Fail: {} -> {}", source.display(), err);
+                }
+            }
+            anyhow::bail!("batch completed with failures");
+        }
+        return Ok(());
+    }
+
+    if cli.tui {
+        if !failed.is_empty() {
+            for (source, err) in failed {
+                eprintln!("Fail: {} -> {}", source.display(), err);
+            }
+            anyhow::bail!("batch preparation failed");
+        }
+        match tui::run_batch_tui(plans, cli.overwrite)? {
+            tui::RunOutcome::Exit | tui::RunOutcome::Back => {}
+        }
+        return Ok(());
+    }
+
+    for plan in plans {
+        let source = plan.source.clone();
         match execute::execute_plan(&plan, cli.overwrite, cli.json) {
             Ok(_) => ok += 1,
             Err(err) => failed.push((source, err)),
